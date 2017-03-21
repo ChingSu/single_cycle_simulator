@@ -1,40 +1,25 @@
-nclude <fstream>
-#include <iterator>
-#include <vector>
-#include <iostream> 
-#include <string.h>
+#include <iostream>
+#include <fstream>
 #include <stdio.h>
+#include <stdlib.h>
+#include <bitset>
+#include <sstream>
+#include <math.h>
 
 using namespace std;
 
-string iimageFile = "iimage.bin";
-string dimageFile = "dimage.bin";
-string registerSnapshot = "snapshot.rpt";
-string errorMessageFile = "error_dump.rpt";
+string iImageFile = "iimage.bin";
+string dImageFile = "dimage.bin";
+string snapshot = "snapshot.rpt";
+string errorMessage = "error_dump.rpt";
 
-int pcCounter =0;
-int stackPointer =0;
-int instructionAmount =0;
-int dataSpace =0;
-int iMemory[256];//1word=4byte, 246word=1k
-int dMemory[256]; 
-int address =0; 
-bool opcode [6];
-bool functCode[6];
-bool rs[5];
-bool rt[5];
-bool rd[5];
-bool shamtC[5];
-bool immediateC[26];
-bool addressC[26];
-
-bitset<32> registers[32];
-bitset<32> HI=0;
-bitset<32> LO=0;
-bitset<32> immc = 0;
-
-bool instruction[8192];
-bool data[8192];
+int PC = 0;
+int stackPointer = 0;
+int insAmount =0;
+int dataAmount = 0;
+int cycleCnt =0;
+bool imemory[1024][8];
+bool dmemory[1024][8];
 
 const int opcodeLength = 6;
 const int functcodeLength = 6;
@@ -45,625 +30,570 @@ const int shamtCLength = 5;
 const int immediateCLength = 26;
 const int addressCLength = 26;
 const int instructionLength = 32;
-const int instructionStart = 64;
 
-int inst_cnt = 0;
-int data_cnt = 0;
+bool instruction[32];
+bool functCode[6];
+bool rs[5];
+bool rt[5];
+bool rd[5];
+bool shamtC[5];
+bool immediateC[26];
+bool addressC[26];
 
-// void processBinary(string s, bool *b[]);
-void readIimage(string s);
-void readDimage(string s);
-void decodeIns(int i);
-void operateRtypeIns(int i);
-void operateItypeIns(int i);
-void operateJtypeIns(int i);
-int extractUnsignedIns(int start, int end, bool b[]);
-int countSignedValue(bitset<32> b);
-int countUnsignedValue(bitset<32> b);
-int maxValue =0;
+bool FINISH = false;
+bool HILO_OCCUPIED = false;
+
+bitset<32> registers[32];
+bitset<32> HI=0;
+bitset<32> LO=0;
+bitset<32> immc = 0;
+bitset<32> dMemory[1024];
+bitset<32> memoryConst = 0x000000FF;
+
+void readIimage(string);
+void readDimage(string);
+void decodeIns(int);
+void operateRtypeIns();
+void operateItypeIns(int);
+void operateJtypeIns(int);
+int extractUnsignedIns(int, int, bool);
+int extractSignedIns(int, int, bool);
+int countSignedValue(bitset<32>);
+int countUnsignedValue(bitset<32>);
+void outputRegisterContent(string);
+void outputErrorMessage(string);
+void writeTo0Detected();
+void numberOverflowDetected();
+void overwriteHILODetected();
+void addressOverflowDetected();
+void misalignmentErrorDetected();
+
+ofstream myfile;
+ofstream errordump;
+
+unsigned long BOUNDARY =0;
 
 int main()
-{	
-	for(int i=0; i<32; i++){
-		maxValue += 1>>i;
+{
+
+	BOUNDARY = pow(2,32);
+	cout << "BOUNDARY = "<< BOUNDARY << endl;
+
+	readIimage(iImageFile);
+	cout<< "Imemory content : "<<endl;
+	for(int i=PC; i<PC+insAmount*4; i++){
+		for(int j=0; j<8; j++){
+			cout<< imemory[i][j] << " ";
+		}
+		cout<<endl;
 	}
 
-	readIimage(iimageFile);
-	readDimage(dimageFile);
-	decodeIns(instructionAmount);
-	// outputRegisterContent(registerSnapshot);
-	// outputErrorMessage(errorMessageFile);
+
+	readDimage(dImageFile);
+	decodeIns(PC);
+
 	return 0;
 }
 
-// void processBinary(string filename, bool *b[]){
-// ifstream input(filename, ios::binary);
-// 	// copies all data into buffer
-// 	vector<char> buffer((istreambuf_iterator<char>(input)), 
-// 	        (istreambuf_iterator<char>()));;
+void readIimage(string s){
+	cout << "Start Read Iimage\n";
+	char ch;
+	ifstream fin(s, ios::in);
+	  if(!fin) {
+	    cout << "Read I Image : Cannot open file for input.\n";
+	  }
 
-// 	cout << "read buffer\n";
-// 	for(vector<char>::const_iterator i = buffer.begin(); i < buffer.end(); i++)
-// 	{
-// 	 	//becuz 1 char =8 bit
-// 	 	char real_inst[2];
-// 	 	real_inst[0] = (*i & 0xf0) >> 4;
-// 	 	real_inst[1] = (*i & 0x0f);
-
-// 	 	for(int j = 0; j < 2; j = j + 1)
-// 	 	{
-// 		 	switch(real_inst[j])
-// 		 	{
-// 		 		case 0x00:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = false;
-// 			 			*b[inst_cnt * 4 + 1] = false;
-// 			 			*b[inst_cnt * 4 + 2] =false;
-// 			 			*b[inst_cnt * 4 + 3] = false;
-// 			 			// printf("%d ", real_inst[j]);
-// 		 			}
-// 		 			break;
-// 		 		case 0x01:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = false;
-// 			 			*b[inst_cnt * 4 + 1] = false;
-// 			 			*b[inst_cnt * 4 + 2] =false;
-// 			 			*b[inst_cnt * 4 + 3] = true;
-// 			 			// printf("%d ", real_inst[j]);
-
-// 		 			}
-// 		 			break;
-// 		 		 case 0x02:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = false;
-// 			 			*b[inst_cnt * 4 + 1] = false;
-// 			 			*b[inst_cnt * 4 + 2] =true;
-// 			 			*b[inst_cnt * 4 + 3] = false;
-// 			 			printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x03:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = false;
-// 			 			*b[inst_cnt * 4 + 1] = false;
-// 			 			*b[inst_cnt * 4 + 2] =true;
-// 			 			*b[inst_cnt * 4 + 3] = true;	
-// 			 			// printf("%d ", real_inst[j]);
-// 		 			}
-// 		 			break;
-// 		 		 case 0x04:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = false;
-// 			 			*b[inst_cnt * 4 + 1] = true;
-// 			 			*b[inst_cnt * 4 + 2] =false;
-// 			 			*b[inst_cnt * 4 + 3] = false;
-// 			 			// printf("%d ", real_inst[j]);
-// 		 			}
-// 		 			break;
-// 		 		 case 0x05:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = false;
-// 			 			*b[inst_cnt * 4 + 1] = true;
-// 			 			*b[inst_cnt * 4 + 2] =false;
-// 			 			*b[inst_cnt * 4 + 3] = true;
-// 			 			// printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x06:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = false;
-// 			 			*b[inst_cnt * 4 + 1] = true;
-// 			 			*b[inst_cnt * 4 + 2] =true;
-// 			 			*b[inst_cnt * 4 + 3] = false;
-// 			 			// printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x07:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = false;
-// 			 			*b[inst_cnt * 4 + 1] = true;
-// 			 			*b[inst_cnt * 4 + 2] =true;
-// 			 			*b[inst_cnt * 4 + 3] = true;
-// 			 			// printf("%d ", real_inst[j]);
-// 		 			}
-// 		 			break;
-// 		 		 case 0x08:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = true;
-// 			 			*b[inst_cnt * 4 + 1] = false;
-// 			 			*b[inst_cnt * 4 + 2] =false;
-// 			 			*b[inst_cnt * 4 + 3] = false;
-// 			 			// printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x09:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = true;
-// 			 			*b[inst_cnt * 4 + 1] = false;
-// 			 			*b[inst_cnt * 4 + 2] =false;
-// 			 			*b[inst_cnt * 4 + 3] = true;
-// 			 			// printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x0A:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = true;
-// 			 			*b[inst_cnt * 4 + 1] = false;
-// 			 			*b[inst_cnt * 4 + 2] =true;
-// 			 			*b[inst_cnt * 4 + 3] = false;
-// 			 			// printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x0B:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = true;
-// 			 			*b[inst_cnt * 4 + 1] = false;
-// 			 			*b[inst_cnt * 4 + 2] =true;
-// 			 			*b[inst_cnt * 4 + 3] = true;
-// 			 			// printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x0C:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = true;
-// 			 			*b[inst_cnt * 4 + 1] = true;
-// 			 			*b[inst_cnt * 4 + 2] =false;
-// 			 			*b[inst_cnt * 4 + 3] = false;
-// 			 			// printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x0D:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = true;
-// 			 			*b[inst_cnt * 4 + 1] = true;
-// 			 			*b[inst_cnt * 4 + 2] =false;
-// 			 			*b[inst_cnt * 4 + 3] = true;
-// 			 			// printf("%d ", real_inst[j]);	
-// 		 			}
-// 		 			break;
-// 		 		 case 0x0E:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = true;
-// 			 			*b[inst_cnt * 4 + 1] = true;
-// 			 			*b[inst_cnt * 4 + 2] =true;
-// 			 			*b[inst_cnt * 4 + 3] = false;
-// 			 			// printf("%d ", real_inst[j]);
-// 		 			}
-// 		 			break;
-// 		 		 case 0x0F:
-// 		 			{
-// 			 			*b[inst_cnt * 4] = true;
-// 			 			*b[inst_cnt * 4 + 1] = true;
-// 			 			*b[inst_cnt * 4 + 2] =true;
-// 			 			*b[inst_cnt * 4 + 3] = true;	
-// 			 			printf("%d ", real_inst[j]);
-// 		 			}
-// 		 			break;
-// 		 		default:
-// 		 			// printf("WTF!!!");
-// 		 		 	break;
-// 		 	}
-// 		 	inst_cnt = inst_cnt + 1;
-// 	 	}
-// 	 }
-// }
-
-void readIimage(string filename){
-	ifstream input(filename, ios::binary);
-	// copies all data into buffer
-	vector<char> buffer((istreambuf_iterator<char>(input)), 
-	        (istreambuf_iterator<char>()));;
-
-	 cout << buffer.size() * sizeof(buffer) << endl;
-	 ofstream fout("data.txt", ios::out | ios::binary);
-	 fout.write((char*)&buffer[0], buffer.size() * sizeof(buffer));
-	 fout.close();
-
-	 cout << "read buffer\n";
-	 for(vector<char>::const_iterator i = buffer.begin(); i < buffer.end(); i++)
-	 {
-	 	//becuz 1 char =8 bit
-	 	char real_inst[2];
-	 	real_inst[0] = (*i & 0xf0) >> 4;
-	 	real_inst[1] = (*i & 0x0f);
-
-	 	for(int j = 0; j < 2; j = j + 1)
-	 	{
-		 	switch(real_inst[j])
-		 	{
-		 		case 0x00:
-		 			{
-			 			instruction[inst_cnt * 4] = false;
-			 			instruction[inst_cnt * 4 + 1] = false;
-			 			instruction[inst_cnt * 4 + 2] =false;
-			 			instruction[inst_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		case 0x01:
-		 			{
-			 			instruction[inst_cnt * 4] = false;
-			 			instruction[inst_cnt * 4 + 1] = false;
-			 			instruction[inst_cnt * 4 + 2] =false;
-			 			instruction[inst_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);
-
-		 			}
-		 			break;
-		 		 case 0x02:
-		 			{
-			 			instruction[inst_cnt * 4] = false;
-			 			instruction[inst_cnt * 4 + 1] = false;
-			 			instruction[inst_cnt * 4 + 2] =true;
-			 			instruction[inst_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x03:
-		 			{
-			 			instruction[inst_cnt * 4] = false;
-			 			instruction[inst_cnt * 4 + 1] = false;
-			 			instruction[inst_cnt * 4 + 2] =true;
-			 			instruction[inst_cnt * 4 + 3] = true;	
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		 case 0x04:
-		 			{
-			 			instruction[inst_cnt * 4] = false;
-			 			instruction[inst_cnt * 4 + 1] = true;
-			 			instruction[inst_cnt * 4 + 2] =false;
-			 			instruction[inst_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		 case 0x05:
-		 			{
-			 			instruction[inst_cnt * 4] = false;
-			 			instruction[inst_cnt * 4 + 1] = true;
-			 			instruction[inst_cnt * 4 + 2] =false;
-			 			instruction[inst_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x06:
-		 			{
-			 			instruction[inst_cnt * 4] = false;
-			 			instruction[inst_cnt * 4 + 1] = true;
-			 			instruction[inst_cnt * 4 + 2] =true;
-			 			instruction[inst_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x07:
-		 			{
-			 			instruction[inst_cnt * 4] = false;
-			 			instruction[inst_cnt * 4 + 1] = true;
-			 			instruction[inst_cnt * 4 + 2] =true;
-			 			instruction[inst_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		 case 0x08:
-		 			{
-			 			instruction[inst_cnt * 4] = true;
-			 			instruction[inst_cnt * 4 + 1] = false;
-			 			instruction[inst_cnt * 4 + 2] =false;
-			 			instruction[inst_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x09:
-		 			{
-			 			instruction[inst_cnt * 4] = true;
-			 			instruction[inst_cnt * 4 + 1] = false;
-			 			instruction[inst_cnt * 4 + 2] =false;
-			 			instruction[inst_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0A:
-		 			{
-			 			instruction[inst_cnt * 4] = true;
-			 			instruction[inst_cnt * 4 + 1] = false;
-			 			instruction[inst_cnt * 4 + 2] =true;
-			 			instruction[inst_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0B:
-		 			{
-			 			instruction[inst_cnt * 4] = true;
-			 			instruction[inst_cnt * 4 + 1] = false;
-			 			instruction[inst_cnt * 4 + 2] =true;
-			 			instruction[inst_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0C:
-		 			{
-			 			instruction[inst_cnt * 4] = true;
-			 			instruction[inst_cnt * 4 + 1] = true;
-			 			instruction[inst_cnt * 4 + 2] =false;
-			 			instruction[inst_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0D:
-		 			{
-			 			instruction[inst_cnt * 4] = true;
-			 			instruction[inst_cnt * 4 + 1] = true;
-			 			instruction[inst_cnt * 4 + 2] =false;
-			 			instruction[inst_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0E:
-		 			{
-			 			instruction[inst_cnt * 4] = true;
-			 			instruction[inst_cnt * 4 + 1] = true;
-			 			instruction[inst_cnt * 4 + 2] =true;
-			 			instruction[inst_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		 case 0x0F:
-		 			{
-			 			instruction[inst_cnt * 4] = true;
-			 			instruction[inst_cnt * 4 + 1] = true;
-			 			instruction[inst_cnt * 4 + 2] =true;
-			 			instruction[inst_cnt * 4 + 3] = true;	
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		default:
-		 			printf("WTF!!!");
-		 		 	break;
+	  int char_cnt = 0;
+	  int ins_cnt =0; 
+	  int ch_int;
+	  while (fin.get(ch)) {
+	  	// cout << "Start Read Char\n";
+		if(char_cnt<4){
+		    if (char_cnt==0){
+		 		PC += ch<<24;
+		 		// ch_int = ch;
+		 		// cout << "PC = " << PC << ", ch = " << ch_int << "\n";
 		 	}
-		 	inst_cnt = inst_cnt + 1;
-	 	}
+		 	else if (char_cnt==1){
+		 		PC += ch<<16;
+		 		// ch_int = ch;
+		 		// cout << "PC = " << PC << ", ch = " << ch_int << "\n";
+		 	}
+		 	else if (char_cnt==2){
+		 		PC += ch<<8;
+		 		// ch_int = ch;
+		 		// cout << "PC = " << PC << ", ch = " << ch_int << "\n";
+		 	}
+		 	else if (char_cnt==3)
+		 	{
+		 		PC += ch;
+		 		ins_cnt= PC;
+		 		// ch_int = ch;
+		 		// cout << "PC = " << PC << ", ch = " << ch_int << "\n";
+		 	}
+	    }
+	    else if(char_cnt<8){
+	    	if (char_cnt==4){
+		 		insAmount += ch<<24;
+		 		// printf("%d\n", ch);
+		 		// cout << "Instruction Amount = "<< insAmount <<endl;
+		 	}
+		 	else if (char_cnt==5){
+		 		insAmount += ch<<16;
+		 		// cout << "Instruction Amount = "<< insAmount <<endl;
+		 	}
+		 	else if (char_cnt==6){
+		 		insAmount += ch<<8;
+		 		// cout << "Instruction Amount = "<< insAmount <<endl;
+		 	}
+		 	else
+		 	{
+		 		insAmount += ch;
+		 		// cout << "Instruction Amount = "<< insAmount <<endl;
+		 	}
+	    }
+	    else{
+	    	char real_inst[2];
+		    real_inst[0] = (ch & 0xf0) >> 4;
+		    real_inst[1] = (ch & 0x0f);
+		    for(int j = 0; j < 2; j = j + 1)
+		    {
+		 		switch(real_inst[j])
+			 	{
+			 		case 0x00:
+			 			{
+				 			imemory[ins_cnt][j*4] = false;
+				 			imemory[ins_cnt][j*4+1] = false;
+				 			imemory[ins_cnt][j*4+2] =false;
+				 			imemory[ins_cnt][j*4+3] = false;
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		case 0x01:
+			 			{
+				 			imemory[ins_cnt][j * 4] = false;
+				 			imemory[ins_cnt][j * 4 + 1] = false;
+				 			imemory[ins_cnt][j * 4 + 2] =false;
+				 			imemory[ins_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);
+
+			 			}
+			 			break;
+			 		 case 0x02:
+			 			{
+				 			imemory[ins_cnt][j * 4] = false;
+				 			imemory[ins_cnt][j * 4 + 1] = false;
+				 			imemory[ins_cnt][j * 4 + 2] =true;
+				 			imemory[ins_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x03:
+			 			{
+				 			imemory[ins_cnt][j * 4] = false;
+				 			imemory[ins_cnt][j * 4 + 1] = false;
+				 			imemory[ins_cnt][j * 4 + 2] =true;
+				 			imemory[ins_cnt][j * 4 + 3] = true;	
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		 case 0x04:
+			 			{
+				 			imemory[ins_cnt][j * 4] = false;
+				 			imemory[ins_cnt][j * 4 + 1] = true;
+				 			imemory[ins_cnt][j * 4 + 2] =false;
+				 			imemory[ins_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		 case 0x05:
+			 			{
+				 			imemory[ins_cnt][j * 4] = false;
+				 			imemory[ins_cnt][j * 4 + 1] = true;
+				 			imemory[ins_cnt][j * 4 + 2] =false;
+				 			imemory[ins_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x06:
+			 			{
+				 			imemory[ins_cnt][j * 4] = false;
+				 			imemory[ins_cnt][j * 4 + 1] = true;
+				 			imemory[ins_cnt][j * 4 + 2] =true;
+				 			imemory[ins_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x07:
+			 			{
+				 			imemory[ins_cnt][j * 4] = false;
+				 			imemory[ins_cnt][j * 4 + 1] = true;
+				 			imemory[ins_cnt][j * 4 + 2] =true;
+				 			imemory[ins_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		 case 0x08:
+			 			{
+				 			imemory[ins_cnt][j * 4] = true;
+				 			imemory[ins_cnt][j * 4 + 1] = false;
+				 			imemory[ins_cnt][j * 4 + 2] =false;
+				 			imemory[ins_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x09:
+			 			{
+				 			imemory[ins_cnt][j * 4] = true;
+				 			imemory[ins_cnt][j * 4 + 1] = false;
+				 			imemory[ins_cnt][j * 4 + 2] =false;
+				 			imemory[ins_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0A:
+			 			{
+				 			imemory[ins_cnt][j * 4] = true;
+				 			imemory[ins_cnt][j * 4 + 1] = false;
+				 			imemory[ins_cnt][j * 4 + 2] =true;
+				 			imemory[ins_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0B:
+			 			{
+				 			imemory[ins_cnt][j * 4] = true;
+				 			imemory[ins_cnt][j * 4 + 1] = false;
+				 			imemory[ins_cnt][j * 4 + 2] =true;
+				 			imemory[ins_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0C:
+			 			{
+				 			imemory[ins_cnt][j * 4] = true;
+				 			imemory[ins_cnt][j * 4 + 1] = true;
+				 			imemory[ins_cnt][j * 4 + 2] =false;
+				 			imemory[ins_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0D:
+			 			{
+				 			imemory[ins_cnt][j * 4] = true;
+				 			imemory[ins_cnt][j * 4 + 1] = true;
+				 			imemory[ins_cnt][j * 4 + 2] =false;
+				 			imemory[ins_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0E:
+			 			{
+				 			imemory[ins_cnt][j * 4] = true;
+				 			imemory[ins_cnt][j * 4 + 1] = true;
+				 			imemory[ins_cnt][j * 4 + 2] =true;
+				 			imemory[ins_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		 case 0x0F:
+			 			{
+				 			imemory[ins_cnt][j * 4] = true;
+				 			imemory[ins_cnt][j * 4 + 1] = true;
+				 			imemory[ins_cnt][j * 4 + 2] =true;
+				 			imemory[ins_cnt][j * 4 + 3] = true;	
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		default:
+			 			printf("Read I Image : WTF!!!");
+			 		 	break;
+			 	} //switch
+
+		 	} //for
+		 	ins_cnt++;
+	    } //else
+	    char_cnt++;
 	 }
-	// processBinary("iimage.bin", *instruction[]);
-	// cout << "\n Inst cnt = " << inst_cnt << "\n";
-	// cout << "\n pcCounter = " << pcCounter << "\n";
-
-	// for(int i = 0; i < inst_cnt; i++){
-	// 	cout <<	instruction[i * 4] << " ";
-	// 	cout <<	instruction[i * 4 + 1] << " ";
-	// 	cout << instruction[i * 4 + 2] << " ";
-	// 	cout <<	instruction[i * 4 + 3] << "\n";	
-	// }
-
-	for(int i = 0; i < 64 ; i++){
-		if(i<32){
-			pcCounter += instruction[i] ? (1 << (31 - i)) : 0;
-			//cout << "i = " << i << ", pcCountet = " << pcCounter << "\n";
-		}
-		else{
-			instructionAmount += instruction[i] ? (1 << (63 - i)) : 0;
-		}
-	}
-
-	 cout << "\n pcCounter' = " << pcCounter << "\n";
-	 cout << "\n instructionAmount' = " << instructionAmount << "\n";
+	 cout << "Read I Image : PC = "<< PC <<endl;
+	 cout << "Read I Image : Instruction Amount = "<< insAmount <<endl;
+	 // cout << "Imemory[0][1] = "<< imemory[0][1] <<endl;
 }
 
-void readDimage(string dimageFile){
+void readDimage(string s){
+	char ch;
+	ifstream fin(s, ios::in);
+	  if(!fin) {
+	    cout << "Read D Image : Cannot open file for input.\n";
+	  }
+	  int char_cnt = 0;
+	  int data_cnt = 0;
 
-	ifstream input(dimageFile, ios::binary);
-	// copies all data into buffer
-	vector<char> buffer((istreambuf_iterator<char>(input)), 
-	        (istreambuf_iterator<char>()));;
-	for(vector<char>::const_iterator i = buffer.begin(); i < buffer.end(); i++)
-	 {
-	 		 	//becuz 1 char =8 bit
-	 	char real_inst[2];
-	 	real_inst[0] = (*i & 0xf0) >> 4;
-	 	real_inst[1] = (*i & 0x0f);
+	  while (fin.get(ch)){
 
-	 	for(int j = 0; j < 2; j = j + 1)
-	 	{
-		 	switch(real_inst[j])
-		 	{
-		 		case 0x00:
-		 			{
-			 			data[data_cnt * 4] = false;
-			 			data[data_cnt * 4 + 1] = false;
-			 			data[data_cnt * 4 + 2] =false;
-			 			data[data_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		case 0x01:
-		 			{
-			 			data[data_cnt * 4] = false;
-			 			data[data_cnt * 4 + 1] = false;
-			 			data[data_cnt * 4 + 2] =false;
-			 			data[data_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);
-
-		 			}
-		 			break;
-		 		 case 0x02:
-		 			{
-			 			data[data_cnt * 4] = false;
-			 			data[data_cnt * 4 + 1] = false;
-			 			data[data_cnt * 4 + 2] =true;
-			 			data[data_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x03:
-		 			{
-			 			data[data_cnt * 4] = false;
-			 			data[data_cnt * 4 + 1] = false;
-			 			data[data_cnt * 4 + 2] =true;
-			 			data[data_cnt * 4 + 3] = true;	
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		 case 0x04:
-		 			{
-			 			data[data_cnt * 4] = false;
-			 			data[data_cnt * 4 + 1] = true;
-			 			data[data_cnt * 4 + 2] =false;
-			 			data[data_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		 case 0x05:
-		 			{
-			 			data[data_cnt * 4] = false;
-			 			data[data_cnt * 4 + 1] = true;
-			 			data[data_cnt * 4 + 2] =false;
-			 			data[data_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x06:
-		 			{
-			 			data[data_cnt * 4] = false;
-			 			data[data_cnt * 4 + 1] = true;
-			 			data[data_cnt * 4 + 2] =true;
-			 			data[data_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x07:
-		 			{
-			 			data[data_cnt * 4] = false;
-			 			data[data_cnt * 4 + 1] = true;
-			 			data[data_cnt * 4 + 2] =true;
-			 			data[data_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		 case 0x08:
-		 			{
-			 			data[data_cnt * 4] = true;
-			 			data[data_cnt * 4 + 1] = false;
-			 			data[data_cnt * 4 + 2] =false;
-			 			data[data_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x09:
-		 			{
-			 			data[data_cnt * 4] = true;
-			 			data[data_cnt * 4 + 1] = false;
-			 			data[data_cnt * 4 + 2] =false;
-			 			data[data_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0A:
-		 			{
-			 			data[data_cnt * 4] = true;
-			 			data[data_cnt * 4 + 1] = false;
-			 			data[data_cnt * 4 + 2] =true;
-			 			data[data_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0B:
-		 			{
-			 			data[data_cnt * 4] = true;
-			 			data[data_cnt * 4 + 1] = false;
-			 			data[data_cnt * 4 + 2] =true;
-			 			data[data_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0C:
-		 			{
-			 			data[data_cnt * 4] = true;
-			 			data[data_cnt * 4 + 1] = true;
-			 			data[data_cnt * 4 + 2] =false;
-			 			data[data_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0D:
-		 			{
-			 			data[data_cnt * 4] = true;
-			 			data[data_cnt * 4 + 1] = true;
-			 			data[data_cnt * 4 + 2] =false;
-			 			data[data_cnt * 4 + 3] = true;
-			 			printf("%d ", real_inst[j]);	
-		 			}
-		 			break;
-		 		 case 0x0E:
-		 			{
-			 			data[data_cnt * 4] = true;
-			 			data[data_cnt * 4 + 1] = true;
-			 			data[data_cnt * 4 + 2] =true;
-			 			data[data_cnt * 4 + 3] = false;
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		 case 0x0F:
-		 			{
-			 			data[data_cnt * 4] = true;
-			 			data[data_cnt * 4 + 1] = true;
-			 			data[data_cnt * 4 + 2] =true;
-			 			data[data_cnt * 4 + 3] = true;	
-			 			printf("%d ", real_inst[j]);
-		 			}
-		 			break;
-		 		default:
-		 			printf("WTF!!!");
-		 		 	break;
+	  	if(char_cnt<4){
+		    if (char_cnt==0){
+		 		stackPointer += ch<<24;
 		 	}
-		 	data_cnt = data_cnt + 1;
-	 	}
-	 }
-	 int a=0;
-	 for(int i = 0; i < 64 ; i++){
-		if(i<32){
-			a += data[i] ? (1 << (31 - i)) : 0;			
-		}
-		else{
-			dataSpace += data[i] ? (1 << (63 - i)) : 0;
-		}
-	}
-	registers[29] = a;
-	cout << " stack pointer = " << registers[29] << "\n";
-	cout << " dataSpace = " << dataSpace << "\n";
+		 	else if (char_cnt==1){
+		 		stackPointer += ch<<16;
+		 	}
+		 	else if (char_cnt==2){
+		 		stackPointer += ch<<8;
+		 	}
+		 	else if (char_cnt==3)
+		 	{
+		 		stackPointer += ch;
+		 	}
+	    }
+	    else if(char_cnt<8){
+	    	if (char_cnt==4){
+		 		dataAmount += ch<<24;
+		 	}
+		 	else if (char_cnt==5){
+		 		dataAmount += ch<<16;
+		 	}
+		 	else if (char_cnt==6){
+		 		dataAmount += ch<<8;
+		 	}
+		 	else
+		 	{
+		 		dataAmount += ch;
+		 	}
+	    }
+	    else{
+	    	char real_inst[2];
+		    real_inst[0] = (ch & 0xf0) >> 4;
+		    real_inst[1] = (ch & 0x0f);
+		    for(int j = 0; j < 2; j = j + 1)
+		    {
+		 		switch(real_inst[j])
+			 	{
+			 		case 0x00:
+			 			{
+				 			dmemory[data_cnt][j*4] = false;
+				 			dmemory[data_cnt][j*4+1] = false;
+				 			dmemory[data_cnt][j*4+2] =false;
+				 			dmemory[data_cnt][j*4+3] = false;
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		case 0x01:
+			 			{
+				 			dmemory[data_cnt][j * 4] = false;
+				 			dmemory[data_cnt][j * 4 + 1] = false;
+				 			dmemory[data_cnt][j * 4 + 1] = false;
+				 			dmemory[data_cnt][j * 4 + 2] =false;
+				 			dmemory[data_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);
+
+			 			}
+			 			break;
+			 		 case 0x02:
+			 			{
+				 			dmemory[data_cnt][j * 4] = false;
+				 			dmemory[data_cnt][j * 4 + 1] = false;
+				 			dmemory[data_cnt][j * 4 + 2] =true;
+				 			dmemory[data_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x03:
+			 			{
+				 			dmemory[data_cnt][j * 4] = false;
+				 			dmemory[data_cnt][j * 4 + 1] = false;
+				 			dmemory[data_cnt][j * 4 + 2] =true;
+				 			dmemory[data_cnt][j * 4 + 3] = true;	
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		 case 0x04:
+			 			{
+				 			dmemory[data_cnt][j * 4] = false;
+				 			dmemory[data_cnt][j * 4 + 1] = true;
+				 			dmemory[data_cnt][j * 4 + 2] =false;
+				 			dmemory[data_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		 case 0x05:
+			 			{
+				 			dmemory[data_cnt][j * 4] = false;
+				 			dmemory[data_cnt][j * 4 + 1] = true;
+				 			dmemory[data_cnt][j * 4 + 2] =false;
+				 			dmemory[data_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x06:
+			 			{
+				 			dmemory[data_cnt][j * 4] = false;
+				 			dmemory[data_cnt][j * 4 + 1] = true;
+				 			dmemory[data_cnt][j * 4 + 2] =true;
+				 			dmemory[data_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x07:
+			 			{
+				 			dmemory[data_cnt][j * 4] = false;
+				 			dmemory[data_cnt][j * 4 + 1] = true;
+				 			dmemory[data_cnt][j * 4 + 2] =true;
+				 			dmemory[data_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		 case 0x08:
+			 			{
+				 			dmemory[data_cnt][j * 4] = true;
+				 			dmemory[data_cnt][j * 4 + 1] = false;
+				 			dmemory[data_cnt][j * 4 + 2] =false;
+				 			dmemory[data_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x09:
+			 			{
+				 			dmemory[data_cnt][j * 4] = true;
+				 			dmemory[data_cnt][j * 4 + 1] = false;
+				 			dmemory[data_cnt][j * 4 + 2] =false;
+				 			dmemory[data_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0A:
+			 			{
+				 			dmemory[data_cnt][j * 4] = true;
+				 			dmemory[data_cnt][j * 4 + 1] = false;
+				 			dmemory[data_cnt][j * 4 + 2] =true;
+				 			dmemory[data_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0B:
+			 			{
+				 			dmemory[data_cnt][j * 4] = true;
+				 			dmemory[data_cnt][j * 4 + 1] = false;
+				 			dmemory[data_cnt][j * 4 + 2] =true;
+				 			dmemory[data_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0C:
+			 			{
+				 			dmemory[data_cnt][j * 4] = true;
+				 			dmemory[data_cnt][j * 4 + 1] = true;
+				 			dmemory[data_cnt][j * 4 + 2] =false;
+				 			dmemory[data_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0D:
+			 			{
+				 			dmemory[data_cnt][j * 4] = true;
+				 			dmemory[data_cnt][j * 4 + 1] = true;
+				 			dmemory[data_cnt][j * 4 + 2] =false;
+				 			dmemory[data_cnt][j * 4 + 3] = true;
+				 			// printf("%d ", real_inst[j]);	
+			 			}
+			 			break;
+			 		 case 0x0E:
+			 			{
+				 			dmemory[data_cnt][j * 4] = true;
+				 			dmemory[data_cnt][j * 4 + 1] = true;
+				 			dmemory[data_cnt][j * 4 + 2] =true;
+				 			dmemory[data_cnt][j * 4 + 3] = false;
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		 case 0x0F:
+			 			{
+				 			dmemory[data_cnt][j * 4] = true;
+				 			dmemory[data_cnt][j * 4 + 1] = true;
+				 			dmemory[data_cnt][j * 4 + 2] =true;
+				 			dmemory[data_cnt][j * 4 + 3] = true;	
+				 			// printf("%d ", real_inst[j]);
+			 			}
+			 			break;
+			 		default:
+			 			printf("WTF!!!");
+			 		 	break;
+			 	} //switch
+
+		 	} //for
+		 	data_cnt++;
+
+	    }//else
+	    char_cnt++;
+	    // cout << "Dmemory[0][1] = "<< dmemory[0][1] <<endl;
+
+	  }//while
+	  registers[29]=stackPointer;
+	    cout << "Read D Image : stack pointer = "<< stackPointer <<endl;
+	    cout << "Read D Image : data Amount = "<< dataAmount <<endl;
 }
 
-void decodeIns(int instructionAmount){
+void decodeIns(int PC){
 
-	for(int i=2; i< (instructionAmount+2); i++){
+	outputRegisterContent(snapshot);
+	outputErrorMessage(errorMessage);
 
-		int opc = 0; 
+	cout << "Decode Inst. : Start Decode!\n";
+	if(FINISH){
+		cout << "Decode Inst. : Success Decode!\n";
+	}
+	while(!FINISH){
+		
+		int counter = 0;
+		int opc = 0;
+
+		cycleCnt ++;
+		myfile << endl;
+		myfile << endl;
+		myfile << "cycle "<< cycleCnt << endl;
+
+		for(int a=0; a<4; a++){
+			for(int b=0; b<8; b++){
+				instruction[counter]=imemory[PC+a][b];
+				counter++;
+			}
+		}
 		for(int j=0; j< opcodeLength; j++){
-			opcode[j]= instruction[(i<<5)+j];
-			opc += opcode[j] ? (1 << (opcodeLength - 1 - j)) : 0;
+			opc += instruction[j] ? (1 << (opcodeLength - 1 - j)) : 0;
+			cout << instruction[j] << " ";
+			cout << "Decode Inst. : Imemory index = "<< PC * 4 << ", opCode = " << opc << endl;
 		}
-		cout << "instrctuion"<< i << " opCode = " << opc << " --> ";
+		cout << "\nDecode Inst. : Final opCode = " << opc << "\n";
 		if(opc==0x00){
-			operateRtypeIns(i);
+			operateRtypeIns();
+			//cout << "Decode Inst. : currently, skip R type instruction\n";
 		}
 		else if((opc==0x08) || (opc==0x09) || (opc==0x23) || (opc==0x21) || (opc==0x25) 
 			|| (opc==0x20) || (opc==0x24) || (opc==0x2B) || (opc==0x29) || (opc==0x28)
 			||(opc==0x0F) || (opc==0x0C) || (opc==0x0D)|| (opc==0x0E) || (opc==0x0A) 
 			|| (opc==0x04) || (opc==0x05) || (opc==0x07)){
-			operateItypeIns(i);
+			cout << "Decode Inst. : instruction = ";
+			for(int i = 0; i < 32; i++)
+				cout << instruction[i] << " ";
+			cout << endl;
+			operateItypeIns(opc);
 		}
-		else if((opc==0x02)|| (opc==0x03)){
-			operateJtypeIns(i);
-		}
-		else if (opc==0x3F){
-			//Halt the program;
+		else if((opc==0x02)|| (opc==0x03)||(opc==0x3F)){
+			operateJtypeIns(opc);
 		}
 		else{
-			printf("Opcode Not Found\n");
-		}		
-		pcCounter +=4;
-	}	
+			cout << "Decode Inst. : Error : OPCODE NOT FOUND" << endl;
+		}	
+		PC+=4;
+		myfile << "PC: 0x"<< hex << PC << endl;
+	}
+	cout << "Decode Inst. : Success Decode!\n";
+	myfile.close();
+	errordump.close();
 }
 
 int extractUnsignedIns(int end, int start, bool b[]){
+	cout << "Ext. U Inst. : Start extract Unsigned ins!\n";
 
 	int length = end - start;
 	int cnt = length-1;
@@ -672,176 +602,220 @@ int extractUnsignedIns(int end, int start, bool b[]){
 		value += b[i] ? (1<<(length-cnt-1)) : 0;
 		cnt--;
 	}
+	cout << "Ext. U Inst. : Return Value = " << value << endl;
+	cout << "Ext. U Inst. : Success extract unsigned ins!\n";
 	return value;
 }
 
 int extractSignedIns(int end, int start, bool b[]){
 
+	cout << "Ext. S Inst. : Start extract signed ins!\n";
 	int length = end - start;
 	int cnt = length-1;
 	int value = 0;
 	for(int i= end; i>start+1; i--){
 		value += b[i] ? (1<<(length-cnt-1)) : 0;
+		//cout << "    -->     b[" << i << "] = " << b[i] << ", value = " << value << endl;
 		cnt--;
 	}
-	value = value - (b[start] ? (1<<(length-1)) : 0); 
+
+	value = value - (b[start + 1] ? (1<<(length-1)) : 0);
+	//cout << "    -->     b[" << start + 1 << "] = " << b[start + 1] << ", value = " << value << endl;
+
+	cout << "Ext. S Inst. : Retuen Value = " << value << endl;
+	cout << "Ext. S Inst. : Success extract signed ins!\n"; 
 	return value;
 }
 
 int countSignedValue(bitset<32> b){
+	cout << "Start count signed value!!\n";
 	int value = 0;
 	for(int i=0; i<32; i++){
 		value+= b[i]<<i;
 	}
+	cout << "Success count signed value!\n";
 	return value;
 }
 
 int countUnsignedValue(bitset<32> b){
+	cout << "Start count signed value!\n";
 	int value = 0;
 	for(int i=0; i<31; i++){
 		value+= b[i]<<i;
 	}
 	value = -(b[32]<<31)+value;
+	cout << "Success count signed value!\n";
 	return value;
 }
 
-void  operateRtypeIns(int i){
+void  operateRtypeIns(){
 
-// int cnt1 = 5; //function code counter
-	// int cnt2 = 4; //shamt c code counter
-	// int cnt3 = 4; //rd code counter
-	// int cnt4 = 4; //rt code counter
-	// int cnt5 = 4; //rs code counter
-	int functc = extractUnsignedIns((i<<5)+31, (i<<5)+25, instruction);
-	int shamtc = extractUnsignedIns((i<<5)+25, (i<<5)+20, instruction);
-	int rdc = extractUnsignedIns((i<<5)+20, (i<<5)+15, instruction);
-	int rtc = extractUnsignedIns((i<<5)+15, (i<<5)+10, instruction);
-	int rsc = extractUnsignedIns((i<<5)+5, (i<<5)+5, instruction);
-	cout << "the first r-type ins's rs is" << rsc;
-	// //record function code
-	// for(int j=(i<<5)+31; j>(i<<5)+25; j--){
-	// 	functCode[cnt1] = instruction[j];
-		
-	// 	functc += functCode[cnt1] ? (1<<(functcodeLength-cnt1-1)) : 0;
-	// 	cnt1++;
-	// }
-	// //record shamt C
-	// for(int j=(i<<5)+25; j>(i<<5)+20; j--){
-	// 	shamtC[cnt2] = instruction[j];
-	// 	shamtc += shamtC[cnt2] ? (1<<(shamtCLength-cnt2-1)) : 0;
-	// 	cnt2++;
-	// }
-	// //record rd
-	// for(int j=(i<<5)+20; j>(i<<5)+15; j--){
-	// 	rd[cnt3] = instruction[j];		
-	// 	rdc += rd[cnt3] ? (1<<(rdLength-cnt3-1)) : 0;
-	// 	cnt3++;
-	// }
-	// //record rt
-	// for(int j=(i<<5)+15; j>(i<<5)+10; j--){
-	// 	rt[cnt4] = instruction[j];		
-	// 	rtc += rt[cnt4] ? (1<<(rtLength-cnt4-1)) : 0;
-	// 	cnt4++;
-	// }
-	// //record rs
-	// for(int j=(i<<5)+10; j>(i<<5)+5; j--){
-	// 	rsCode[cnt5] = instruction[j];		
-	// 	rsc += rs[cnt5] ? (1<<(rsLength-cnt5-1)) : 0;
-	// 	cnt5++;
-	// }
+	cout << "Start operate R-type ins!\n";
 
+	int functc = extractUnsignedIns(31, 25, instruction);
+	int shamtc = extractUnsignedIns(25, 20, instruction);
+	int rdc = extractUnsignedIns(20, 15, instruction);
+	int rtc = extractUnsignedIns(15, 10, instruction);
+	int rsc = extractUnsignedIns(10, 5, instruction);
 
 	switch(functc){
 
 		case 0x20://add 
-		{	
-			if((countSignedValue(registers[rtc])+countSignedValue(registers[rsc])) < (maxValue+1)){			
+		{
+			if(rdc==0){
+				writeTo0Detected();
+			}
+			else{		
 				registers[rdc]= countSignedValue(registers[rtc])+countSignedValue(registers[rsc]);
+				myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;
 			}
-			else{
-				//TODO
-				printf("overflow exception!");
-			}
-			
+			if(((registers[rsc].to_ulong()>0)&&(registers[rtc].to_ulong()>0)&&(registers[rsc].to_ulong()+registers[rtc].to_ulong()<0))||((registers[rsc].to_ulong()<0)&&(registers[rtc].to_ulong()<0)&&(registers[rsc].to_ulong()+registers[rtc].to_ulong()>0))){
+				numberOverflowDetected();
+			}				
         }
         break;
         case 0x21://addu (rt could be unsigned)
         {
-        	if((countUnsignedValue(registers[rtc])+countUnsignedValue(registers[rsc])) < (maxValue+1)){
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
 				registers[rdc]= countUnsignedValue(registers[rtc])+countUnsignedValue(registers[rsc]);
-       		}
-       		else{
-       			registers[rdc]= countUnsignedValue(registers[rtc])+countUnsignedValue(registers[rsc])-(1<<32);
-       		}        		
+	       		myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;			
+       		}     		
         }
         break;
         case 0x22://sub
         {
-        	registers[rdc]= countSignedValue(registers[rtc])+ countSignedValue(registers[rsc]);
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+				registers[rdc]= countSignedValue(registers[rtc])+ countSignedValue(registers[rsc]);
+	        	myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;  
+			}
+			if(((registers[rsc].to_ulong()>0)&&(registers[rtc].to_ulong()>0)&&(registers[rsc].to_ulong()+registers[rtc].to_ulong()<0))||((registers[rsc].to_ulong()<0)&&(registers[rtc].to_ulong()<0)&&(registers[rsc].to_ulong()+registers[rtc].to_ulong()>0))){
+				numberOverflowDetected();
+			}
         }
         break;
         case 0x24://and
         {
-        	registers[rdc]= registers[rtc] & registers[rsc];
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+	        	registers[rdc]= registers[rtc] & registers[rsc];
+	        	myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;
+			}  
         }
         break;
         case 0x25://or
         {
-        	registers[rdc]= registers[rtc]|registers[rsc];
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+	        	registers[rdc]= registers[rtc]|registers[rsc];
+	        	myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;  				
+	        }
         }
         break;
         case 0x26://xor
         {
-        	registers[rdc]= registers[rtc]^registers[rsc];
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+				registers[rdc]= registers[rtc]^registers[rsc];
+        	    myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;  
+			}
         }
         break;
         case 0x27://nor
         {
-        	registers[rdc]= ~(registers[rtc]|registers[rsc]);
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+	        	registers[rdc]= ~(registers[rtc]|registers[rsc]);
+	        	myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;  
+			}
         }
         break;
         case 0x28://nand
         {
-        	registers[rdc]= ~(registers[rtc]&registers[rsc]);
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+	            registers[rdc]= ~(registers[rtc]&registers[rsc]);
+        	    myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;
+			}  
         }
         break;
         case 0x2A://slt
         {
-        	if(countSignedValue(registers[rsc])<countSignedValue(registers[rtc])){
-        		registers[rdc]=1;
-        	} 
-        	else{
-        		registers[rdc]=0;
-        	}
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+	        	if(countSignedValue(registers[rsc])<countSignedValue(registers[rtc])){
+	        		registers[rdc]=1;
+	        	} 
+	        	else{
+	        		registers[rdc]=0;
+	        	}
+	        	myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;
+			} 
         }
         break;
         case 0x00://sll
         {
-        	registers[rdc] = registers[rtc] << shamtc;
+        	if(rdc==0){
+        		if(!(rtc==0 && shamtc ==0)){
+        			writeTo0Detected();
+        		}
+			}
+			else{
+	        	registers[rdc] = registers[rtc] << shamtc;
+	        	myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;
+			}
         }
         break;
         case 0x02://srl
         {
-        	registers[rdc] = registers[rtc] >> shamtc;	
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+	        	registers[rdc] = registers[rtc] >> shamtc;
+	        	myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;
+			}	
         }
         break;
         case 0x03://sra (with sign bit shifted in)
         {
-        	if(registers[rtc][31]!=1){
-        		registers[rdc] = registers[rtc] >> shamtc;	
-        	}
-        	else{
-        		registers[rdc] = registers[rtc] >> shamtc;
-        		for(int i=31; i>(31-shamtc); i--){
-        			registers[rdc][i]=1;
-        		}
-        	}        	
+        	if(rdc==0){
+				writeTo0Detected();
+			}
+			else{
+			    if(registers[rtc][31]!=1){
+	        		registers[rdc] = registers[rtc] >> shamtc;	
+	        	}
+	        	else{
+	        		registers[rdc] = registers[rtc] >> shamtc;
+	        		for(int i=31; i>(31-shamtc); i--){
+	        			registers[rdc][i]=1;
+	        		}
+	        	} 
+	        	myfile << "$"  <<rdc<<": 0x"<< hex <<registers[rdc].to_ulong()<< endl;
+			}       	
         }
         break;
         case 0x08://jr
         {
-        	pcCounter = countSignedValue(registers[rsc]);
-        	//TODO can pcCOunter be negative?
+        	PC = countSignedValue(registers[rsc]);
         }
         break;
         case 0x18://mult
@@ -854,6 +828,17 @@ void  operateRtypeIns(int i){
         	for(int i=32; i<64; i++){
         		HI[i-32]= b[i];
         	}
+        	if(HI.to_ulong()!=0){
+        		myfile << "HI: "<<": 0x"<< hex <<HI.to_ulong()<< endl;     		
+        	}
+        	if(((registers[rsc].to_ulong()>0)&&(registers[rtc].to_ulong()>0)&&(registers[rsc].to_ulong()*registers[rtc].to_ulong()<0))||((registers[rsc].to_ulong()<0)&&(registers[rtc].to_ulong()<0)&&(registers[rsc].to_ulong()*registers[rtc].to_ulong()>0))){
+				numberOverflowDetected();
+			}
+			if(HILO_OCCUPIED){
+        		overwriteHILODetected();
+        	}
+        	myfile << "LO: "<<": 0x"<< hex <<LO.to_ulong()<< endl;
+        	HILO_OCCUPIED = true;
         }
         break;
         case 0x19://multu
@@ -866,175 +851,472 @@ void  operateRtypeIns(int i){
         	for(int i=32; i<64; i++){
         		HI[i-32]= b[i];
         	}
+        	if(HI.to_ulong()!=0){
+        		myfile << "HI: "<<": 0x"<< hex <<HI.to_ulong()<< endl;     		
+        	}
+        	if(HILO_OCCUPIED){
+        		overwriteHILODetected();
+        	}
+        	myfile << "LO: "<<": 0x"<< hex <<LO.to_ulong()<< endl;
+        	HILO_OCCUPIED = true;
         }
         break;
         case 0x10://mfhi
         {
+        	HILO_OCCUPIED = false;
+        	if(rdc==0){
+				writeTo0Detected();
+			}
         	HI = registers[rdc];
+        	myfile << "HI: "<<": 0x"<< hex <<HI.to_ulong()<< endl; 
         }
         break;
         case 0x12://mflo
         {
+        	HILO_OCCUPIED = false;
+        	if(rdc==0){
+				writeTo0Detected();
+			}
         	LO = registers[rdc];
+        	myfile << "LO: "<<": 0x"<< hex <<LO.to_ulong()<< endl; 
         }
         default:
-        cout << "illegal instruction found at 0x" << address;
+        // cout << "illegal instruction found at 0x" << address;
         //TODO halt;
         break;
     }
-
+    cout << "Success operate R-type ins!\n";
 }
-	
 
-void operateItypeIns(int i){
+void operateItypeIns(int opc){
+	cout << "I type Inst. : Start operate i-type in! opc = " << opc <<"\n";
+	int unsignedImmc = extractUnsignedIns(31, 15, instruction);
+	int signedImmc = extractSignedIns(31, 15, instruction);
+	int rtc = extractUnsignedIns(15, 10, instruction);
+	int rsc = extractUnsignedIns(10, 5, instruction);
 
-	int unsignedImmc = extractUnsignedIns((i<<5)+31, (i<<5)+15, instruction);
-	int signedImmc = extractSignedIns((i<<5)+31, (i<<5)+15, instruction);
-	int rtc = extractUnsignedIns((i<<5)+15, (i<<5)+10, instruction);
-	int rsc = extractUnsignedIns((i<<5)+10, (i<<5)+5, instruction);
-	int opc = extractUnsignedIns((i<<5)+5, (i<<5)-1, instruction);
-
-	for(int i=31; i>15; i++){
-		immc[31-i] =instruction[(i<<5)+i];
-	} 
+	for(int i=0; i<16; i++){
+		immc[i] =instruction[31-i];
+	}
 	for(int i=16; i<32; i++){
 		immc[i]=0;
 	}
 
-	cout << "the first I-type ins's rs is" << rsc;
+	cout<<"current immc = "<< immc <<endl;
 
-      switch (opc)  
+	cout << "I type Inst. : the first I-type ins's rs is : " << rsc << endl;
+
+      switch (opc)
       {          
          case 0x08://I-type instructions, addi 
          {
-         	if((countSignedValue(registers[rsc])+signedImmc) < (maxValue+1)){			
-				registers[rtc]=countSignedValue(registers[rsc])+signedImmc;
+         	if(rtc==0){
+				writeTo0Detected();
 			}
-			else{
-				//TODO
-				printf("overflow exception!");
+			else{		
+				registers[rtc]=countSignedValue(registers[rsc])+signedImmc;
+				myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl;
+			}
+			if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
 			}
          }
          break;
          case 0x09://I-type instructions, addiu 
-         { 
-         	if((countSignedValue(registers[rsc])+unsignedImmc) < (maxValue+1)){			
-				registers[rtc]=countSignedValue(registers[rsc])+unsignedImmc;
+         {
+         	if(rtc==0){
+				writeTo0Detected();
 			}
 			else{
-       			registers[rtc]= countSignedValue(registers[rtc])+unsignedImmc-(1<<32);
-			}         	
+	       		registers[rtc]= countSignedValue(registers[rtc])+unsignedImmc-BOUNDARY;
+				myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl;
+			}        	
          }
          break;
-         //超級不確定範圍開始
          case 0x23://I-type instructions, lw
          {
-         	
+         	if(rtc==0){
+				writeTo0Detected();
+			}
+			else{
+	         	int tempRtc =0;
+	         	for(int i=3; i>=0; i--){
+	         		cout << "opCode 0x23 : rsc = " << rsc << ", signedImmc * 4 = " << signedImmc * 4 << ", 3 - i = " << 3 - i << endl;
+	         		cout << "opCode 0x23 : Dmemory index = [" << registers[rsc].to_ulong()+signedImmc*4+(3-i) << "]\n";
+	         		tempRtc += extractUnsignedIns(7, -1, dmemory[registers[rsc].to_ulong()+signedImmc*4+(3-i)])<<(i*8);
+	         	}
+	         	registers[rtc]= tempRtc;
+
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl;
+			} 
+			if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
+			if(!((4*signedImmc+registers[rsc].to_ulong())< BOUNDARY)){
+				addressOverflowDetected();
+			}
+			cout << "--> " << (4*signedImmc+registers[rsc].to_ulong())%4 << "\n";
+			if((4*signedImmc+registers[rsc].to_ulong())%4!=0){
+				misalignmentErrorDetected();
+			}
          }
          break;
          case 0x21://I-type instructions, lh
          {
+         	if(rtc==0){
+				writeTo0Detected();
+			}
+			else{
+	         	int tempRtc =0;
+	         	bitset<32> temp =  0xffff0000;
+	         	for(int i=1; i>=0; i--){
+	         		tempRtc += extractUnsignedIns(7, -1, dmemory[registers[rsc].to_ulong()+signedImmc*2+(1-i)])<<(i*8);
+	         	}
+	         	registers[rtc]= tempRtc;
+	         	if(registers[rtc][15]==1){
+	         		registers[rtc] = registers[rtc] | temp;
+	         	}
 
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl; 
+			}
+			if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
+			if(!((2*signedImmc+registers[rsc].to_ulong())< BOUNDARY)){
+				addressOverflowDetected();
+			}
+			if((2*signedImmc+registers[rsc].to_ulong())%2!=0){
+				misalignmentErrorDetected();
+			}
          }
          break; 
          case 0x25://I-type instructions, lhu
          {
-
+         	if(rtc==0){
+				writeTo0Detected();
+			}
+			else{
+				int tempRtc =0;
+	         	for(int i=1; i>=0; i--){
+	         		tempRtc += extractUnsignedIns(7, -1, dmemory[registers[rsc].to_ulong()+signedImmc*2+(1-i)])<<(i*8);
+	         	}
+	         	registers[rtc]= tempRtc;
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl;
+			} 
+		    if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
+			if(!((2*signedImmc+registers[rsc].to_ulong())< BOUNDARY)){
+				addressOverflowDetected();
+			}
+			if((2*signedImmc+registers[rsc].to_ulong())%2!=0){
+				misalignmentErrorDetected();
+			}
          }
          break;
          case 0x20://I-type instructions, lb 
          {
-
+          	if(rtc==0){
+				writeTo0Detected();
+			} 
+			else{
+	         	int tempRtc =0;
+	         	bitset<32> temp =  0xffffff00;
+	         	tempRtc += extractUnsignedIns(7, -1, dmemory[registers[rsc].to_ulong()+signedImmc]);
+	         	registers[rtc]= tempRtc;
+	         	if(registers[rtc][7]==1){
+	         		registers[rtc] = registers[rtc] | temp;
+	         	}
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl; 
+			}
+	        if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
+			if(!((signedImmc+registers[rsc].to_ulong())< BOUNDARY)){
+				addressOverflowDetected();
+			}      
          }
          break;
          case 0x24://I-type instructions, lbu 
          {
-
+         	if(rtc==0){
+				writeTo0Detected();
+			}    
+			else{
+	         	int tempRtc =0;
+	         	tempRtc += extractUnsignedIns(7, -1, dmemory[registers[rsc].to_ulong()+signedImmc]);
+	         	registers[rtc]= tempRtc;
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl; 
+			}
+	        if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
+			if(!((signedImmc+registers[rsc].to_ulong())< BOUNDARY)){
+				addressOverflowDetected();
+			} 	
          }
          break;
          case 0x2B://I-type instructions, sw
          {
-
+         	for(int i=0; i<4; i++){
+         		if(i==0){
+         			for(int j=0; j<8; j++){
+         				cout << "opCode 0x2B : Dmemory index = [" << 4*signedImmc+registers[rsc].to_ulong()+i << "][" << i << "]\n";
+         				dmemory[4*signedImmc+registers[rsc].to_ulong()+i][j]= registers[rtc][31-j];
+         			}
+         		}
+         		else if(i==1){
+         			for(int j=0; j<8; j++){
+         				cout << "opCode 0x2B : Dmemory index = [" << 4*signedImmc+registers[rsc].to_ulong()+i << "][" << i << "]\n";
+         				dmemory[4*signedImmc+registers[rsc].to_ulong()+i][j]= registers[rtc][23-j];
+         			}
+         		}
+         		else if(i==2){
+         			for(int j=0; j<8; j++){
+         				cout << "opCode 0x2B : Dmemory index = [" << 4*signedImmc+registers[rsc].to_ulong()+i << "][" << i << "]\n";
+         				dmemory[4*signedImmc+registers[rsc].to_ulong()+i][j]= registers[rtc][15-j];
+         			}
+         		}
+         		else{
+         			for(int j=0; j<8; j++){
+         				cout << "opCode 0x2B : Dmemory index = [" << 4*signedImmc+registers[rsc].to_ulong()+i << "][" << i << "]\n";
+         				dmemory[4*signedImmc+registers[rsc].to_ulong()+i][j]= registers[rtc][7-j];
+         			}
+         		}
+         	}
+         	if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
+			if(!((4*signedImmc+registers[rsc].to_ulong())< BOUNDARY)){
+				addressOverflowDetected();
+			} 
          }
          break;
          case 0x29://I-type instructions, sh 
          {
-
+         	for(int i=0; i<2; i++){
+         		if(i==0){
+         			for(int j=0; j<8; j++){
+         				dmemory[signedImmc+registers[rsc].to_ulong()+i][j]= registers[rtc][15-j];
+         			}
+         		}
+         		else{
+         			for(int j=0; j<8; j++){
+         				dmemory[signedImmc+registers[rsc].to_ulong()+i][j]= registers[rtc][7-j];
+         			}
+         		}
+         	}
+         	if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
+			if(!((2*signedImmc+registers[rsc].to_ulong())< BOUNDARY)){
+				addressOverflowDetected();
+			} 
          }
          break;
          case 0x28://I-type instructions, sb
          {
-
+         	for(int i=0; i<8; i++){
+         		dmemory[signedImmc+registers[rsc].to_ulong()][i]=registers[rtc][7-i];
+         	}
+         	if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
+			if(!((signedImmc+registers[rsc].to_ulong())< BOUNDARY)){
+				addressOverflowDetected();
+			} 
          }
          break;
-         //超級不確定範圍結束
          case 0x0F://I-type instructions, lui 
          {
-         	registers[rtc]= signedImmc << 16;
+          	if(rtc==0){
+				writeTo0Detected();
+			} 
+			else{
+	         	registers[rtc]= signedImmc << 16;
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl;
+			}        
          }
          break;
          case 0x0C://I-type instructions, andi 
          {
-         	registers[rtc]= registers[rsc] & immc;
+         	if(rtc==0){
+				writeTo0Detected();
+			}
+			else{
+	         	registers[rtc]= registers[rsc] & immc;
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl; 				
+         	}         	
          }
          break;
          case 0x0D://I-type instructions, ori 
          {
-         	registers[rtc]= registers[rsc] | immc;
+         	if(rtc==0){
+				writeTo0Detected();
+			}  
+			else{
+	         	registers[rtc]= registers[rsc] | immc;
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl;				
+			}       	
          }
          break;
          case 0x0E://I-type instructions, nori 
          {
-         	registers[rtc]= ~(registers[rsc] | immc);
+         	if(rtc==0){
+				writeTo0Detected();
+			}
+			else{
+	         	registers[rtc]= ~(registers[rsc] | immc);
+	         	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl; 
+			}      	
          }
          break;          
          case 0x0A://I-type instructions, slti 
          {
-        	if(countSignedValue(registers[rsc])<signedImmc){
-        		registers[rtc]=1;
-        	} 
-        	else{
-        		registers[rtc]=0;
-        	}
+         	if(rtc==0){
+				writeTo0Detected();
+			}
+			else{
+	        	if(countSignedValue(registers[rsc])<signedImmc){
+	        		registers[rtc]=1;
+	        	} 
+	        	else{
+	        		registers[rtc]=0;
+	        	}
+	        	myfile << "$"  <<rtc<<": 0x"<< hex <<registers[rtc].to_ulong()<< endl; 				
+			}         	
          }
          break;
          case 0x04://I-type instructions, beq 
          {
         	if(countSignedValue(registers[rsc])==countSignedValue(registers[rtc])){
-        		pcCounter = pcCounter + 4 + 4*signedImmc;
-        	} 
+        		PC = countUnsignedValue(PC) + 4 + 4*signedImmc;
+        	}
+        	if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			} 
          }
          break;
          case 0x05://I-type instructions, bne
          {
         	if(countSignedValue(registers[rsc])!=countSignedValue(registers[rtc])){
-        		pcCounter = pcCounter + 4 + 4*signedImmc;
+        		PC = countUnsignedValue(PC) + 4 + 4*signedImmc;
         	} 
+        	if(((registers[rsc].to_ulong()>0)&&(signedImmc>0)&&(registers[rsc].to_ulong()+signedImmc<0))||((registers[rsc].to_ulong()<0)&&(signedImmc<0)&&(registers[rsc].to_ulong()+signedImmc>0))){
+				numberOverflowDetected();
+			}
          }
          break;
          case 0x07://I-type instructions, bgtz
          {
         	if(countSignedValue(registers[rsc])>0){
-        		pcCounter = pcCounter + 4 + 4*signedImmc;
+        		PC = countUnsignedValue(PC) + 4 + 4*signedImmc;
         	} 
          }
          break;
          default:  
-            cout << "illegal instruction found at 0x" + address;
+            // cout << "illegal instruction found at 0x" + address;
             //TODO halt;
             break;
       }
+      cout << "I type Inst. : Success operate i-type ins!\n";
 
 }
 
-void operateJtypeIns(int i){
+void operateJtypeIns(int opc){
+
+	cout << "Start operate J-type ins!\n";
+
+	int unsignedAddressc = extractUnsignedIns(31, 5, instruction);
+
+	switch(opc){
+		case 0x02:
+		{
+			PC = PC+4;
+			bitset <4> frontPC;
+			frontPC = (PC&0xffffffff)>>28;
+			bitset <32> tempPC;
+			tempPC = unsignedAddressc <<2;
+			for(int j=31; j>27; j--){
+				tempPC[j]= frontPC[j-28];
+			}
+			PC = countUnsignedValue(tempPC);
+		}
+		break;
+		case 0x03:
+		{
+			PC = PC+4;
+			registers[31]= PC;
+			bitset <4> frontPC;
+			frontPC = (PC&0xffffffff)>>28;
+			bitset <32> tempPC;
+			tempPC = unsignedAddressc <<2;
+			for(int j=31; j>27; j--){
+				tempPC[j]= frontPC[j-28];
+			}
+			PC = countUnsignedValue(tempPC);
+		}
+		break;
+		case 0x3F:
+		{
+			FINISH= true;
+		}
+		break;
+		default:
+		break;
+	}
+	cout << "Success operate J-type ins!\n";
+}
+
+void outputRegisterContent(string s){
+cout << "Out Register : start\n";
+	// ofstream output(s.c_str(), ios::app);
+	myfile.open (s);
+	myfile << "cycle "<< cycleCnt << endl;
+	char buffer_regIndex[3];
+	char buffer_regContent[9];
+
+	for(int i=0; i< 32; i++){
+
+		sprintf(buffer_regIndex, "%02d", i);
+		sprintf(buffer_regContent, "%08lx", registers[i].to_ulong());
+
+		myfile << "$" << buffer_regIndex << ": 0x" << buffer_regContent << endl;
+
+	}
+	sprintf(buffer_regContent, "%08lx", HI.to_ulong());
+	myfile << "HI: 0x"<< buffer_regContent << endl;
+	sprintf(buffer_regContent, "%08lx", LO.to_ulong());
+	myfile << "LO: 0x"<< buffer_regContent << endl;
+	sprintf(buffer_regContent, "%08x", PC);
+	myfile << "PC: 0x"<< buffer_regContent << endl;
 
 }
 
-void outputRegisterContent(){
-
+void outputErrorMessage(string s){	
+	errordump.open(s);
 }
 
-void outputErrorMessage(){
-
+void writeTo0Detected(){
+	errordump << "In cycle "<< cycleCnt <<": Write $0 Error" <<endl;
 }
+
+void numberOverflowDetected(){
+	errordump << "In cycle: "<< cycleCnt <<": Number Overflow" <<endl;
+}
+
+void overwriteHILODetected(){
+	errordump << "In cycle: "<< cycleCnt <<": Overwrite HI-LO registers" <<endl;
+}
+
+void addressOverflowDetected(){	
+	errordump << "In cycle: "<< cycleCnt <<": Address Overflow" <<endl;
+	FINISH = true;
+}
+
+void misalignmentErrorDetected(){
+	errordump << "In cycle: "<< cycleCnt <<": Misalignment Error" <<endl;
+	FINISH = true;
+}
+
+
